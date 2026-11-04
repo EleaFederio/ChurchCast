@@ -1,0 +1,361 @@
+import { useEffect, useState } from 'react'
+import {
+  ChevronDown,
+  CircleDashed,
+  Monitor,
+  Pause,
+  Play,
+  Presentation,
+  Send,
+  Settings,
+  SkipBack,
+  SkipForward,
+} from 'lucide-react'
+import LivePage from './pages/LivePage.jsx'
+import ServicesPage from './pages/ServicesPage.jsx'
+import SongsPage from './pages/SongsPage.jsx'
+import SlidesPage from './pages/SlidesPage.jsx'
+import MediaPage from './pages/MediaPage.jsx'
+import ScripturePage from './pages/ScripturePage.jsx'
+
+function AudienceView() {
+  const [currentText, setCurrentText] = useState(
+    'For where two or three gather in my name, there am I with them.',
+  )
+
+  useEffect(() => {
+    if (typeof window.require !== 'function') return undefined
+
+    const { ipcRenderer } = window.require('electron')
+    const handleProjection = (_event, content) => {
+      if (typeof content === 'string') setCurrentText(content)
+    }
+
+    ipcRenderer.on('render-slide', handleProjection)
+    return () => ipcRenderer.removeAllListeners('render-slide')
+  }, [])
+
+  return (
+    <main className="absolute inset-0 flex h-screen w-screen flex-col items-center justify-center overflow-hidden bg-black p-12 text-white select-none">
+      <p className="max-w-6xl whitespace-pre-line text-center text-5xl font-bold leading-relaxed tracking-wide drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)] md:text-7xl">
+        {currentText}
+      </p>
+    </main>
+  )
+}
+
+function renderTabContent(activeTab) {
+  switch (activeTab) {
+    case 'Live':
+      return <LivePage />
+    case 'Services':
+      return <ServicesPage />
+    case 'Songs':
+      return <SongsPage />
+    case 'Slides':
+      return <SlidesPage />
+    case 'Media':
+      return <MediaPage />
+    case 'Scripture':
+    default:
+      return <ScripturePage />
+  }
+}
+
+function formatPlaybackTime(seconds) {
+  const minutes = Math.floor(seconds / 60)
+  const remainingSeconds = seconds % 60
+  return `${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`
+}
+
+function MessageComposer({ id, label, value, onChange, onSend }) {
+  function handleSubmit(event) {
+    event.preventDefault()
+    const message = value.trim()
+    if (!message) return
+    onSend(message)
+    onChange('')
+  }
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <label htmlFor={id} className="mb-1.5 block text-xs font-medium text-zinc-300">
+        {label}
+      </label>
+      <div className="flex gap-2">
+        <input
+          id={id}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder="Type a message..."
+          className="h-9 min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-2.5 text-xs text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-sky-700 focus:ring-1 focus:ring-sky-700"
+        />
+        <button
+          type="submit"
+          disabled={!value.trim()}
+          aria-label={`Send ${label}`}
+          title={`Send ${label}`}
+          className="grid size-9 shrink-0 place-items-center rounded-md bg-zinc-800 text-zinc-300 transition hover:bg-zinc-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <Send size={14} aria-hidden="true" />
+        </button>
+      </div>
+    </form>
+  )
+}
+
+function AdminPanel({ activeTab, onTabChange }) {
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [isOutputMenuOpen, setIsOutputMenuOpen] = useState(false)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [playbackSeconds, setPlaybackSeconds] = useState(0)
+  const [stageMessage, setStageMessage] = useState('')
+  const [audienceMessage, setAudienceMessage] = useState('')
+  const [lastSentMessage, setLastSentMessage] = useState('')
+  const durationSeconds = 240
+  const tabs = ['Live', 'Services', 'Songs', 'Slides', 'Media', 'Scripture']
+
+  useEffect(() => {
+    if (!isPlaying) return undefined
+
+    const intervalId = window.setInterval(() => {
+      setPlaybackSeconds((seconds) => Math.min(seconds + 1, durationSeconds))
+    }, 1000)
+
+    return () => window.clearInterval(intervalId)
+  }, [durationSeconds, isPlaying])
+
+  return (
+    <div className="min-h-screen bg-zinc-950 text-zinc-100">
+      <header className="sticky top-0 z-20 flex h-14 items-center justify-between bg-[#121212] px-4">
+        <div className="flex shrink-0 items-center gap-2.5">
+          <span className="grid size-8 place-items-center rounded-md bg-emerald-500 text-zinc-950">
+            <Presentation size={17} strokeWidth={2.5} aria-hidden="true" />
+          </span>
+          <span className="text-sm font-semibold text-white">Presenter</span>
+        </div>
+
+        <nav
+          aria-label="Main navigation"
+          className="absolute left-1/2 flex max-w-[calc(100vw-12rem)] -translate-x-1/2 items-center gap-0.5 overflow-x-auto rounded-full border border-zinc-800/80 bg-zinc-900/80 p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
+          {tabs.map((tab) => {
+            const isActive = activeTab === tab
+            return (
+              <button
+                key={tab}
+                type="button"
+                aria-current={isActive ? 'page' : undefined}
+                onClick={() => onTabChange(tab)}
+                className={`inline-flex shrink-0 items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                  isActive
+                    ? 'bg-zinc-800 text-zinc-50'
+                    : 'text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-100'
+                }`}
+              >
+                {tab === 'Live' && (
+                  <span className="size-1.5 rounded-full bg-emerald-400" aria-hidden="true" />
+                )}
+                {tab}
+              </button>
+            )
+          })}
+        </nav>
+
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+          <span
+            role="img"
+            aria-label="System status ready"
+            title="System status ready"
+            className="grid size-8 place-items-center text-zinc-400"
+          >
+            <CircleDashed size={16} className="animate-spin" aria-hidden="true" />
+          </span>
+          <span
+            role="img"
+            aria-label="Audience display connected"
+            title="Audience display connected"
+            className="relative grid size-8 place-items-center text-zinc-400"
+          >
+            <Monitor size={17} aria-hidden="true" />
+            <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-red-500 ring-2 ring-[#121212]" />
+          </span>
+          <div className="relative">
+            <button
+              type="button"
+              aria-label="Settings"
+              aria-haspopup="menu"
+              aria-expanded={isSettingsOpen}
+              aria-controls="settings-menu"
+              title="Settings"
+              onClick={() => setIsSettingsOpen((isOpen) => !isOpen)}
+              className="grid size-8 place-items-center rounded-md text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+            >
+              <Settings size={17} aria-hidden="true" />
+            </button>
+            {isSettingsOpen && (
+              <div
+                id="settings-menu"
+                role="menu"
+                aria-label="Settings menu"
+                className="absolute right-0 top-full mt-2 w-48 rounded-lg border border-zinc-800 bg-zinc-900 p-1 shadow-xl shadow-black/30"
+              >
+                {['Display settings', 'Preferences', 'Keyboard shortcuts'].map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => setIsSettingsOpen(false)}
+                    className="w-full rounded-md px-3 py-2 text-left text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white"
+                  >
+                    {item}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </header>
+
+      <div className="flex h-[calc(100vh-3.5rem)] flex-row overflow-hidden bg-[#1a1a1a]">
+        <section
+          aria-label="Page content workspace"
+          className="h-full min-w-0 flex-1 overflow-y-auto p-4"
+        >
+          {renderTabContent(activeTab)}
+        </section>
+
+        <aside className="flex h-full w-80 shrink-0 flex-col justify-between border-l border-zinc-800 bg-[#121212] p-3 text-zinc-100">
+          <div className="space-y-4">
+            <section aria-label="Audience output preview">
+              <div className="relative">
+                <button
+                  type="button"
+                  aria-expanded={isOutputMenuOpen}
+                  aria-haspopup="listbox"
+                  aria-label="Select output display"
+                  onClick={() => setIsOutputMenuOpen((isOpen) => !isOpen)}
+                  className="flex h-9 w-full items-center justify-between rounded-t-md border border-sky-900/80 bg-sky-950 px-2.5 text-left text-xs font-medium text-sky-100 hover:bg-sky-900"
+                >
+                  <span>Main Audience Output</span>
+                  <ChevronDown size={14} aria-hidden="true" />
+                </button>
+                {isOutputMenuOpen && (
+                  <div
+                    role="listbox"
+                    aria-label="Audience output displays"
+                    className="absolute inset-x-0 top-full z-10 rounded-b-md border border-zinc-700 bg-zinc-900 p-1 shadow-xl"
+                  >
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected="true"
+                      onClick={() => setIsOutputMenuOpen(false)}
+                      className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-100 hover:bg-zinc-800"
+                    >
+                      Main Audience Output
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div className="grid aspect-video place-items-center rounded-b-md border border-t-0 border-zinc-800 bg-black px-4 text-center">
+                <p className="text-sm font-medium leading-5 text-zinc-200">
+                  For where two or three gather in my name
+                </p>
+              </div>
+            </section>
+
+            <section aria-label="Media playback controls">
+              <div className="mb-1 flex items-center justify-between font-mono text-[10px] text-zinc-500">
+                <span>{formatPlaybackTime(playbackSeconds)}</span>
+                <span>{formatPlaybackTime(durationSeconds)}</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max={durationSeconds}
+                value={playbackSeconds}
+                aria-label="Playback position"
+                onChange={(event) => setPlaybackSeconds(Number(event.target.value))}
+                className="mb-2 h-1.5 w-full cursor-pointer accent-sky-500"
+              />
+              <div className="flex items-center justify-center gap-3">
+                <button
+                  type="button"
+                  aria-label="Back 5 seconds"
+                  title="Back 5 seconds"
+                  onClick={() => setPlaybackSeconds((seconds) => Math.max(0, seconds - 5))}
+                  className="grid size-8 place-items-center rounded-md text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+                >
+                  <SkipBack size={16} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  aria-label={isPlaying ? 'Pause' : 'Play'}
+                  title={isPlaying ? 'Pause' : 'Play'}
+                  onClick={() => {
+                    if (playbackSeconds >= durationSeconds) setPlaybackSeconds(0)
+                    setIsPlaying((playing) => !playing)
+                  }}
+                  className="grid size-9 place-items-center rounded-full bg-zinc-100 text-zinc-950 hover:bg-white"
+                >
+                  {isPlaying ? <Pause size={15} aria-hidden="true" /> : <Play size={15} aria-hidden="true" fill="currentColor" />}
+                </button>
+                <button
+                  type="button"
+                  aria-label="Forward 5 seconds"
+                  title="Forward 5 seconds"
+                  onClick={() => setPlaybackSeconds((seconds) => Math.min(durationSeconds, seconds + 5))}
+                  className="grid size-8 place-items-center rounded-md text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+                >
+                  <SkipForward size={16} aria-hidden="true" />
+                </button>
+              </div>
+            </section>
+          </div>
+
+          <section aria-label="Display messages" className="space-y-3 border-t border-zinc-800 pt-3">
+            <MessageComposer
+              id="stage-display-message"
+              label="Stage Display message"
+              value={stageMessage}
+              onChange={setStageMessage}
+              onSend={(message) => setLastSentMessage(`Stage: ${message}`)}
+            />
+            <MessageComposer
+              id="audience-message"
+              label="Audience message"
+              value={audienceMessage}
+              onChange={setAudienceMessage}
+              onSend={(message) => setLastSentMessage(`Audience: ${message}`)}
+            />
+            <p aria-live="polite" className="min-h-4 truncate text-[10px] text-zinc-500">
+              {lastSentMessage ? `Prepared: ${lastSentMessage}` : 'Messages are ready to prepare'}
+            </p>
+          </section>
+        </aside>
+      </div>
+    </div>
+  )
+}
+
+function App() {
+  const [activeTab, setActiveTab] = useState('Scripture')
+  const [isAudienceView, setIsAudienceView] = useState(
+    () => window.location.hash === '#/audience',
+  )
+
+  useEffect(() => {
+    const updateView = () => setIsAudienceView(window.location.hash === '#/audience')
+    window.addEventListener('hashchange', updateView)
+    return () => window.removeEventListener('hashchange', updateView)
+  }, [])
+
+  return isAudienceView ? (
+    <AudienceView />
+  ) : (
+    <AdminPanel activeTab={activeTab} onTabChange={setActiveTab} />
+  )
+}
+
+export default App
