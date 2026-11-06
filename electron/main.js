@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, screen } = require('electron')
 const { existsSync } = require('node:fs')
 const path = require('node:path')
+const { createSongsDatabase } = require('./songs-database')
 
 const controllerUrl = 'http://localhost:5173'
 const audienceUrl = 'http://localhost:5173/#/audience'
@@ -14,6 +15,18 @@ let controllerWindow
 let audienceWindow
 let audienceMode = 'live'
 let latestProjection = 'For where two or three gather in my name'
+let songsDatabase
+
+function getSongsDatabase() {
+  if (songsDatabase) return songsDatabase
+
+  const configuredPath = process.env.DATABASE_PATH?.trim()
+  const databasePath = configuredPath
+    ? path.resolve(__dirname, '..', configuredPath)
+    : path.join(app.getPath('userData'), 'churchcast.sqlite')
+  songsDatabase = createSongsDatabase(databasePath)
+  return songsDatabase
+}
 
 function assertControllerSender(event) {
   if (event.sender !== controllerWindow?.webContents) {
@@ -59,6 +72,14 @@ function isProjection(content) {
           (typeof verse.number === 'string' || typeof verse.number === 'number') &&
           typeof verse.content === 'string',
       ) &&
+      (!content.background || isMediaAsset(content.background))) ||
+    (content?.type === 'song' &&
+      typeof content.content === 'string' &&
+      content.settings &&
+      typeof content.settings.fontFamily === 'string' &&
+      Number.isFinite(content.settings.fontSize) &&
+      typeof content.settings.fontColor === 'string' &&
+      /^#[0-9a-f]{6}$/i.test(content.settings.fontColor) &&
       (!content.background || isMediaAsset(content.background)))
   )
 }
@@ -109,23 +130,31 @@ function syncAudienceWindow() {
   audienceWindow.webContents.send('render-slide', latestProjection)
 }
 
+function getAudienceDisplay() {
+  const primaryDisplay = screen.getPrimaryDisplay()
+  const extendedDisplay = screen
+    .getAllDisplays()
+    .find((display) => display.id !== primaryDisplay.id)
+
+  return extendedDisplay || primaryDisplay
+}
+
 function createAudienceWindow(openOnPrimary = false) {
   if (audienceWindow && !audienceWindow.isDestroyed()) return
 
   const primaryDisplay = screen.getPrimaryDisplay()
-  const secondaryDisplay = screen
-    .getAllDisplays()
-    .find((display) => display.id !== primaryDisplay.id)
+  const display = getAudienceDisplay()
+  const hasExtendedDisplay = display.id !== primaryDisplay.id
 
-  if (!secondaryDisplay && !openOnPrimary) return
+  if (!hasExtendedDisplay && !openOnPrimary) return
 
   audienceWindow = new BrowserWindow({
-    x: (secondaryDisplay || primaryDisplay).bounds.x,
-    y: (secondaryDisplay || primaryDisplay).bounds.y,
-    width: (secondaryDisplay || primaryDisplay).bounds.width,
-    height: (secondaryDisplay || primaryDisplay).bounds.height,
-    frame: !secondaryDisplay,
-    fullscreen: Boolean(secondaryDisplay),
+    x: display.bounds.x,
+    y: display.bounds.y,
+    width: display.bounds.width,
+    height: display.bounds.height,
+    frame: false,
+    fullscreen: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -180,16 +209,52 @@ app.whenReady().then(() => {
     return fetchYouVersionJson(`/v1/bibles/${bibleId}/passages/${passageId}?format=text`)
   })
 
+  ipcMain.handle('songs:list', (event) => {
+    assertControllerSender(event)
+    return getSongsDatabase().list()
+  })
+
+  ipcMain.handle('songs:save', (event, song) => {
+    assertControllerSender(event)
+    return getSongsDatabase().save(song)
+  })
+
+  ipcMain.handle('songs:get-settings', (event) => {
+    assertControllerSender(event)
+    return getSongsDatabase().getSettings()
+  })
+
+  ipcMain.handle('songs:save-settings', (event, settings) => {
+    assertControllerSender(event)
+    return getSongsDatabase().saveSettings(settings)
+  })
+
+  ipcMain.handle('songs:delete', (event, songId) => {
+    assertControllerSender(event)
+    getSongsDatabase().delete(songId)
+  })
+
   ipcMain.on('show-audience', (event) => {
     if (event.sender !== controllerWindow?.webContents) return
     if (!audienceWindow || audienceWindow.isDestroyed()) createAudienceWindow(true)
-    audienceWindow?.show()
-    audienceWindow?.focus()
+    if (!audienceWindow || audienceWindow.isDestroyed()) return
+
+    const display = getAudienceDisplay()
+    audienceWindow.setFullScreen(false)
+    audienceWindow.setBounds(display.bounds)
+    audienceWindow.setFullScreen(true)
+    audienceWindow.show()
+    audienceWindow.focus()
   })
 
   ipcMain.on('audience-ready', (event) => {
     if (event.sender !== audienceWindow?.webContents) return
     syncAudienceWindow()
+  })
+
+  ipcMain.on('close-audience', (event) => {
+    if (event.sender !== audienceWindow?.webContents) return
+    audienceWindow.close()
   })
 
   ipcMain.on('set-audience-mode', (event, mode) => {
@@ -221,4 +286,9 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+})
+
+app.on('will-quit', () => {
+  songsDatabase?.close()
+  songsDatabase = undefined
 })

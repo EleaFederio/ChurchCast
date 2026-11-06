@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ChevronDown,
   CircleDashed,
@@ -38,6 +38,18 @@ function AudienceView() {
     }
   }, [])
 
+  useEffect(() => {
+    function handleKeyDown(event) {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      window.churchCast?.closeAudience()
+      if (!window.churchCast) window.close()
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
   if (displayMode === 'black') {
     return <main className="absolute inset-0 h-screen w-screen bg-black" />
   }
@@ -68,6 +80,29 @@ function renderMedia(media, className) {
 }
 
 function renderProjection(content, isPreview = false) {
+  if (content && typeof content === 'object' && content.type === 'song') {
+    const songStyle = content.settings || {}
+    return (
+      <div className="relative flex h-full w-full items-center justify-center overflow-hidden text-center">
+        {content.background && renderMedia(content.background, 'absolute inset-0 size-full object-cover')}
+        <p
+          className={`relative z-10 max-w-6xl whitespace-pre-line font-bold leading-relaxed tracking-wide drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)] ${
+            isPreview ? 'px-2 py-1' : 'px-12 py-8'
+          }`}
+          style={{
+            fontFamily: songStyle.fontFamily || 'Arial, sans-serif',
+            fontSize: isPreview
+              ? `${Math.max(8, (Number(songStyle.fontSize) || 64) * 0.16)}px`
+              : `${Number(songStyle.fontSize) || 64}px`,
+            color: songStyle.fontColor || '#ffffff',
+          }}
+        >
+          {content.content}
+        </p>
+      </div>
+    )
+  }
+
   if (content && typeof content === 'object' && content.type === 'scripture') {
     return (
       <div className={`relative flex h-full w-full flex-col overflow-hidden bg-white text-zinc-900 ${isPreview ? '' : 'px-[4.5vw] py-[4vh]'}`}>
@@ -159,14 +194,25 @@ function renderProjection(content, isPreview = false) {
   )
 }
 
-function renderTabContent(activeTab, { projectText, mediaPageProps }) {
+function renderTabContent(activeTab, {
+  projectText,
+  mediaPageProps,
+  songDisplaySettings,
+  onSongDisplaySettingsChange,
+}) {
   switch (activeTab) {
     case 'Live':
       return <LivePage />
     case 'Services':
       return <ServicesPage />
     case 'Songs':
-      return <SongsPage onProject={(content) => projectText(content, 'song')} />
+      return (
+        <SongsPage
+          onProject={(content) => projectText(content, 'song')}
+          songDisplaySettings={songDisplaySettings}
+          onSongDisplaySettingsChange={onSongDisplaySettingsChange}
+        />
+      )
     case 'Slides':
       return <SlidesPage />
     case 'Media':
@@ -234,11 +280,56 @@ function AdminPanel({ activeTab, onTabChange }) {
   const [backgrounds, setBackgrounds] = useState({ song: null, scripture: null })
   const [baseMedia, setBaseMedia] = useState(null)
   const [audienceMode, setAudienceModeState] = useState('live')
+  const [songDisplaySettings, setSongDisplaySettings] = useState({
+    fontFamily: 'Arial, sans-serif',
+    fontSize: 64,
+    fontColor: '#ffffff',
+    linesPerSlide: 'all',
+  })
+  const [songSettingsError, setSongSettingsError] = useState('')
+  const songSettingsEdited = useRef(false)
   const [lastTextProjection, setLastTextProjection] = useState(
     'For where two or three gather in my name',
   )
   const durationSeconds = 240
   const tabs = ['Live', 'Services', 'Songs', 'Slides', 'Media', 'Scripture']
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadSongSettings() {
+      try {
+        const getSettings = window.churchCast?.songs?.getSettings
+        if (typeof getSettings === 'function') {
+          const settings = await getSettings()
+          if (!cancelled) {
+            if (!songSettingsEdited.current) {
+              setSongDisplaySettings((current) => ({ ...current, ...settings }))
+            }
+            setSongSettingsError('')
+          }
+        } else if (window.churchCast?.songs) {
+          throw new Error('Song display settings are unavailable. Restart Church Cast to update.')
+        } else {
+          const savedSettings = window.localStorage.getItem('churchcast.songSettings')
+          if (savedSettings) {
+            setSongDisplaySettings((current) => ({ ...current, ...JSON.parse(savedSettings) }))
+          }
+        }
+      } catch (error) {
+        console.error('Unable to load song display settings.', error)
+        if (!cancelled) {
+          setSongSettingsError(error.message || 'Unable to load song display settings.')
+        }
+      }
+    }
+
+    void loadSongSettings()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   function sendProjection(projection) {
     setAudienceContent(projection)
@@ -258,6 +349,18 @@ function AdminPanel({ activeTab, onTabChange }) {
   }
 
   function projectText(content, context) {
+    if (context === 'song') {
+      const projection = {
+        type: 'song',
+        content,
+        background: backgrounds.song,
+        settings: songDisplaySettings,
+      }
+      setLastTextProjection(projection)
+      sendProjection(baseMedia ? { type: 'media', media: baseMedia } : projection)
+      return
+    }
+
     if (context === 'scripture' && content?.type === 'scripture') {
       const projection = {
         ...content,
@@ -298,7 +401,47 @@ function AdminPanel({ activeTab, onTabChange }) {
     backgrounds,
     baseMedia,
   }
-  const tabProps = { projectText, mediaPageProps }
+  function updateSongDisplaySettings(changes) {
+    const updatedSettings = { ...songDisplaySettings, ...changes }
+    songSettingsEdited.current = true
+    setSongDisplaySettings(updatedSettings)
+    const saveSettings = window.churchCast?.songs?.saveSettings
+    if (typeof saveSettings === 'function') {
+      Promise.resolve()
+        .then(() => saveSettings(changes))
+        .then(() => setSongSettingsError(''))
+        .catch((error) => {
+          console.error('Unable to save song display settings.', error)
+          setSongSettingsError(error.message || 'Unable to save song display settings.')
+        })
+    } else if (window.churchCast?.songs) {
+      const error = new Error('Song display settings cannot be saved. Restart Church Cast to update.')
+      console.error('Unable to save song display settings.', error)
+      setSongSettingsError(error.message)
+    } else {
+      try {
+        window.localStorage.setItem('churchcast.songSettings', JSON.stringify(updatedSettings))
+        setSongSettingsError('')
+      } catch (error) {
+        console.error('Unable to save song display settings.', error)
+        setSongSettingsError(error.message || 'Unable to save song display settings.')
+      }
+    }
+    if (audienceContent?.type === 'song') {
+      sendProjection({ ...audienceContent, settings: updatedSettings })
+    }
+    if (lastTextProjection?.type === 'song') {
+      setLastTextProjection({ ...lastTextProjection, settings: updatedSettings })
+    }
+  }
+
+  const tabProps = {
+    projectText,
+    mediaPageProps,
+    songDisplaySettings,
+    onSongDisplaySettingsChange: updateSongDisplaySettings,
+    songSettingsError,
+  }
 
   useEffect(() => {
     if (!isPlaying) return undefined

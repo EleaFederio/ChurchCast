@@ -76,7 +76,13 @@ async function fetchMockUltimateGuitarResults(query) {
 
 const sectionTags = ['Verse 1', 'Verse 2', 'Chorus', 'Bridge']
 
-export default function SongEditorModal({ isOpen, onClose, onSave, song = null }) {
+export default function SongEditorModal({
+  isOpen,
+  onClose,
+  onSave,
+  song = null,
+  errorMessage = '',
+}) {
   const [mode, setMode] = useState('manual')
   const [title, setTitle] = useState(song?.title ?? '')
   const [artist, setArtist] = useState(song?.artist ?? '')
@@ -196,6 +202,12 @@ export default function SongEditorModal({ isOpen, onClose, onSave, song = null }
             <X size={17} aria-hidden="true" />
           </button>
         </header>
+
+        {errorMessage && (
+          <p role="alert" className="mb-4 rounded-md border border-red-900/60 bg-red-950/30 p-3 text-xs text-red-300">
+            {errorMessage}
+          </p>
+        )}
 
         <div className="mb-5 grid shrink-0 grid-cols-2 rounded-lg border border-zinc-800 bg-zinc-950/70 p-1">
           <button

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   ArrowLeft,
   EllipsisVertical,
@@ -16,6 +16,17 @@ const starterSongs = [
   { id: 'song-3', title: 'Build My Life', artist: 'Housefires' },
   { id: 'song-4', title: 'In Christ Alone', artist: 'Keith Getty & Stuart Townend' },
 ]
+const SAVED_SONGS_KEY = 'churchcast.songs'
+
+function readSavedSongs() {
+  const savedSongs = window.localStorage.getItem(SAVED_SONGS_KEY)
+  if (!savedSongs) return starterSongs
+  const parsedSongs = JSON.parse(savedSongs)
+  if (!Array.isArray(parsedSongs)) {
+    throw new Error('The saved song library has an invalid format.')
+  }
+  return parsedSongs
+}
 
 function parseSongSections(lyrics = '') {
   const sections = []
@@ -98,38 +109,89 @@ function createProjectionSlides(sections, linesPerSlide) {
   })
 }
 
-export default function SongsPage({ onProject }) {
+export default function SongsPage({
+  onProject,
+  songDisplaySettings,
+  onSongDisplaySettingsChange,
+  songSettingsError,
+}) {
   const [songs, setSongs] = useState(starterSongs)
+  const [isLoadingSongs, setIsLoadingSongs] = useState(true)
+  const [storageError, setStorageError] = useState('')
   const [searchTerm, setSearchTerm] = useState('')
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingSong, setEditingSong] = useState(null)
   const [openMenuId, setOpenMenuId] = useState(null)
   const [activeSongId, setActiveSongId] = useState(null)
   const [projectedSlideId, setProjectedSlideId] = useState(null)
-  const [linesPerSlide, setLinesPerSlide] = useState('all')
 
   const activeSong = songs.find((song) => song.id === activeSongId)
   const slideSections = activeSong ? parseSongSections(activeSong.lyrics) : []
-  const projectionSlides = createProjectionSlides(slideSections, linesPerSlide)
+  const projectionSlides = createProjectionSlides(slideSections, songDisplaySettings.linesPerSlide)
   const filteredSongs = songs.filter((song) =>
     `${song.title} ${song.artist}`.toLowerCase().includes(searchTerm.trim().toLowerCase()),
   )
 
-  function handleAddSong(song) {
-    setSongs((currentSongs) => [
-      { ...song, id: globalThis.crypto?.randomUUID?.() ?? `song-${Date.now()}` },
-      ...currentSongs,
-    ])
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadSongs() {
+      try {
+        const loadedSongs = window.churchCast?.songs
+          ? await window.churchCast.songs.list()
+          : readSavedSongs()
+        if (!Array.isArray(loadedSongs)) {
+          throw new Error('The song database returned an invalid song library.')
+        }
+        if (!cancelled) {
+          setSongs(loadedSongs)
+          setStorageError('')
+        }
+      } catch (error) {
+        console.error('Unable to load the song library.', error)
+        if (!cancelled) {
+          setStorageError(error.message || 'Unable to load the song library.')
+        }
+      } finally {
+        if (!cancelled) setIsLoadingSongs(false)
+      }
+    }
+
+    void loadSongs()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  function persistSongList(nextSongs) {
+    if (!window.churchCast?.songs) {
+      window.localStorage.setItem(SAVED_SONGS_KEY, JSON.stringify(nextSongs))
+    }
   }
 
-  function handleUpdateSong(updatedSong) {
-    setSongs((currentSongs) =>
-      currentSongs.map((song) => (song.id === updatedSong.id ? updatedSong : song)),
-    )
+  async function handleAddSong(song) {
+    const newSong = {
+      ...song,
+      id: song.id || globalThis.crypto?.randomUUID?.() || `song-${Date.now()}`,
+    }
+    const nextSongs = [newSong, ...songs]
+    if (window.churchCast?.songs) await window.churchCast.songs.save(newSong)
+    else await persistSongList(nextSongs)
+    setSongs(nextSongs)
   }
 
-  function handleDeleteSong(songId) {
-    setSongs((currentSongs) => currentSongs.filter((song) => song.id !== songId))
+  async function handleUpdateSong(updatedSong) {
+    const nextSongs = songs.map((song) => (song.id === updatedSong.id ? updatedSong : song))
+    if (window.churchCast?.songs) await window.churchCast.songs.save(updatedSong)
+    else await persistSongList(nextSongs)
+    setSongs(nextSongs)
+  }
+
+  async function handleDeleteSong(songId) {
+    const nextSongs = songs.filter((song) => song.id !== songId)
+    if (window.churchCast?.songs) await window.churchCast.songs.delete(songId)
+    else await persistSongList(nextSongs)
+    setSongs(nextSongs)
     setActiveSongId((currentId) => (currentId === songId ? null : currentId))
   }
 
@@ -142,6 +204,7 @@ export default function SongsPage({ onProject }) {
 
   function openEditor(song = null) {
     setEditingSong(song)
+    setStorageError('')
     setIsModalOpen(true)
     setOpenMenuId(null)
   }
@@ -151,13 +214,30 @@ export default function SongsPage({ onProject }) {
     setEditingSong(null)
   }
 
-  function handleSaveSong(song) {
-    if (editingSong) {
-      handleUpdateSong({ ...editingSong, ...song })
-    } else {
-      handleAddSong(song)
+  async function handleSaveSong(song) {
+    try {
+      if (editingSong) {
+        await handleUpdateSong({ ...editingSong, ...song })
+      } else {
+        await handleAddSong(song)
+      }
+      setStorageError('')
+      closeEditor()
+    } catch (error) {
+      console.error('Unable to save the song.', error)
+      setStorageError(error.message || 'Unable to save the song.')
     }
-    closeEditor()
+  }
+
+  async function handleDeleteSongSafely(songId) {
+    try {
+      await handleDeleteSong(songId)
+      setStorageError('')
+    } catch (error) {
+      console.error('Unable to delete the song.', error)
+      setStorageError(error.message || 'Unable to delete the song.')
+      setOpenMenuId(null)
+    }
   }
 
   return (
@@ -176,6 +256,22 @@ export default function SongsPage({ onProject }) {
           </span>
         </div>
 
+        {storageError && (
+          <p role="alert" className="mb-4 rounded-md border border-red-900/60 bg-red-950/30 p-3 text-xs text-red-300">
+            {storageError}
+          </p>
+        )}
+        {songSettingsError && (
+          <p role="alert" className="mb-4 rounded-md border border-red-900/60 bg-red-950/30 p-3 text-xs text-red-300">
+            {songSettingsError}
+          </p>
+        )}
+        {isLoadingSongs && (
+          <p role="status" className="mb-4 text-xs text-zinc-500">
+            Loading saved songs...
+          </p>
+        )}
+
         <label className="relative mb-5 block max-w-lg">
           <Search
             size={17}
@@ -191,6 +287,71 @@ export default function SongsPage({ onProject }) {
             className="h-10 w-full rounded-md border border-zinc-800 bg-zinc-900 pl-10 pr-3 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-600 focus:ring-1 focus:ring-zinc-600"
           />
         </label>
+
+        <section
+          aria-labelledby="song-display-style-title"
+          className="mb-5 rounded-lg border border-zinc-800 bg-zinc-900/70 p-4"
+        >
+          <div className="mb-3">
+            <h2 id="song-display-style-title" className="text-sm font-semibold text-zinc-100">
+              Global audience song style
+            </h2>
+            <p className="mt-1 text-[11px] text-zinc-500">
+              These settings apply to every song projected on the audience display.
+            </p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <label className="min-w-0 text-[11px] text-zinc-400">
+              Font
+              <select
+                value={songDisplaySettings.fontFamily}
+                onChange={(event) =>
+                  onSongDisplaySettingsChange({ fontFamily: event.target.value })
+                }
+                aria-label="Audience song font"
+                className="mt-1 h-9 w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 text-xs text-zinc-100 outline-none focus:border-sky-600"
+              >
+                <option value="Arial, sans-serif">Arial</option>
+                <option value="Georgia, serif">Georgia</option>
+                <option value="'Trebuchet MS', sans-serif">Trebuchet MS</option>
+                <option value="Verdana, sans-serif">Verdana</option>
+                <option value="'Courier New', monospace">Courier New</option>
+              </select>
+            </label>
+            <label className="text-[11px] text-zinc-400">
+              Font size · {songDisplaySettings.fontSize}px
+              <input
+                type="range"
+                min="24"
+                max="96"
+                step="2"
+                value={songDisplaySettings.fontSize}
+                onChange={(event) =>
+                  onSongDisplaySettingsChange({ fontSize: Number(event.target.value) })
+                }
+                aria-label="Audience song font size"
+                className="mt-3 block h-3 w-full cursor-pointer accent-sky-500"
+              />
+            </label>
+            <label className="text-[11px] text-zinc-400">
+              Font color
+              <span className="mt-1 flex h-9 items-center gap-2 rounded-md border border-zinc-700 bg-zinc-950 px-2">
+                <input
+                  type="color"
+                  value={songDisplaySettings.fontColor}
+                  onChange={(event) =>
+                    onSongDisplaySettingsChange({ fontColor: event.target.value })
+                  }
+                  aria-label="Audience song font color"
+                  className="size-6 cursor-pointer rounded border-0 bg-transparent p-0"
+                />
+                <span className="font-mono text-xs text-zinc-300">
+                  {songDisplaySettings.fontColor.toUpperCase()}
+                </span>
+              </span>
+            </label>
+          </div>
+        </section>
 
         {activeSong ? (
           <div className="space-y-4">
@@ -250,9 +411,9 @@ export default function SongsPage({ onProject }) {
                   <label className="flex items-center gap-2 text-[11px] text-zinc-400">
                     Lyrics per slide
                     <select
-                      value={linesPerSlide}
+                      value={songDisplaySettings.linesPerSlide}
                       onChange={(event) => {
-                        setLinesPerSlide(event.target.value)
+                        onSongDisplaySettingsChange({ linesPerSlide: event.target.value })
                         setProjectedSlideId(null)
                       }}
                       aria-label="Lyrics per projection slide"
@@ -286,7 +447,7 @@ export default function SongsPage({ onProject }) {
                         >
                           <span className="block text-xs font-semibold text-zinc-100">
                             {slide.label}
-                            {linesPerSlide !== 'all' && ` · Slide ${index + 1}`}
+                            {songDisplaySettings.linesPerSlide !== 'all' && ` · Slide ${index + 1}`}
                           </span>
                           <span className="mt-2 block line-clamp-5 whitespace-pre-line text-xs leading-5 text-zinc-400">
                             {slide.content}
@@ -363,7 +524,7 @@ export default function SongsPage({ onProject }) {
                         type="button"
                         role="menuitem"
                         onClick={() => {
-                          handleDeleteSong(song.id)
+                          void handleDeleteSongSafely(song.id)
                           setOpenMenuId(null)
                         }}
                         className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-red-300 hover:bg-zinc-800"
@@ -395,7 +556,8 @@ export default function SongsPage({ onProject }) {
         aria-label="Add song"
         title="Add song"
         onClick={() => openEditor()}
-        className="fixed bottom-6 right-[22rem] z-40 flex h-14 w-14 items-center justify-center rounded-full bg-blue-600 text-white shadow-lg shadow-blue-950/30 transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#1a1a1a]"
+        disabled={isLoadingSongs}
+        className="fixed bottom-6 right-[22rem] z-40 flex h-14 w-14 items-center justify-center rounded-full bg-blue-600 text-white shadow-lg shadow-blue-950/30 transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#1a1a1a] disabled:cursor-not-allowed disabled:opacity-50"
       >
         <Plus size={27} strokeWidth={2.2} aria-hidden="true" />
       </button>
@@ -406,6 +568,7 @@ export default function SongsPage({ onProject }) {
           song={editingSong}
           onClose={closeEditor}
           onSave={handleSaveSong}
+          errorMessage={storageError}
         />
       )}
     </main>

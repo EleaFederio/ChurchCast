@@ -30,6 +30,14 @@ function isProjection(content) {
           (typeof verse.number === 'string' || typeof verse.number === 'number') &&
           typeof verse.content === 'string',
       ) &&
+      (!content.background || isMediaAsset(content.background))) ||
+    (content?.type === 'song' &&
+      typeof content.content === 'string' &&
+      content.settings &&
+      typeof content.settings.fontFamily === 'string' &&
+      Number.isFinite(content.settings.fontSize) &&
+      typeof content.settings.fontColor === 'string' &&
+      /^#[0-9a-f]{6}$/i.test(content.settings.fontColor) &&
       (!content.background || isMediaAsset(content.background)))
   )
 }
@@ -60,6 +68,9 @@ contextBridge.exposeInMainWorld('churchCast', {
   showAudience() {
     ipcRenderer.send('show-audience')
   },
+  closeAudience() {
+    ipcRenderer.send('close-audience')
+  },
   readyAudience() {
     ipcRenderer.send('audience-ready')
   },
@@ -67,5 +78,12 @@ contextBridge.exposeInMainWorld('churchCast', {
     listBibles: (options) => ipcRenderer.invoke('youversion:list-bibles', options),
     getIndex: (bibleId) => ipcRenderer.invoke('youversion:get-index', bibleId),
     getPassage: (options) => ipcRenderer.invoke('youversion:get-passage', options),
+  },
+  songs: {
+    list: () => ipcRenderer.invoke('songs:list'),
+    save: (song) => ipcRenderer.invoke('songs:save', song),
+    delete: (songId) => ipcRenderer.invoke('songs:delete', songId),
+    getSettings: () => ipcRenderer.invoke('songs:get-settings'),
+    saveSettings: (settings) => ipcRenderer.invoke('songs:save-settings', settings),
   },
 })
