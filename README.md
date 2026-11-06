@@ -1,5 +1,21 @@
 # React + Vite
 
+## YouVersion Bible access
+
+Church Cast uses the YouVersion Platform API to browse Bible versions available
+to the app key and fetch selected verses online. Added versions are saved as
+library entries on the device; Bible text is not downloaded for offline use.
+
+Create a root `.env` file with your YouVersion app key:
+
+```env
+APP_KEY=your-youversion-app-key
+```
+
+Keep `.env` private and do not commit it. The API key is read by Electron's main
+process and is not included in the renderer bundle. Bible version availability
+depends on the licenses associated with the app key.
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:

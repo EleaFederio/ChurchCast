@@ -58,7 +58,47 @@ function parseSongSections(lyrics = '') {
     .map((section, index) => ({ ...section, id: `slide-${index}` }))
 }
 
-export default function SongsPage() {
+function removeChordLines(content) {
+  const chordPattern =
+    /^[A-G](?:#|b)?(?:maj|min|m|M|dim|aug|sus\d*|add\d*)?(?:\d+(?:sus\d*|add\d*|b\d+|#\d+)?)*(?:\([^)]*\))?(?:\/[A-G](?:#|b)?)?$/i
+
+  return content
+    .split(/\r?\n/)
+    .filter((line) => {
+      const chordTokens = line
+        .replace(/[|[\]()]/g, ' ')
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+
+      return !chordTokens.length || !chordTokens.every((token) => chordPattern.test(token))
+    })
+    .join('\n')
+    .trim()
+}
+
+function createProjectionSlides(sections, linesPerSlide) {
+  return sections.flatMap((section) => {
+    const lyrics = removeChordLines(section.content)
+    if (!lyrics) return []
+
+    const lines = lyrics.split(/\r?\n/).filter((line) => line.trim())
+    const slideSize = linesPerSlide === 'all' ? lines.length : Number(linesPerSlide)
+
+    return Array.from({ length: Math.ceil(lines.length / slideSize) }, (_, index) => {
+      const start = index * slideSize
+      const content = lines.slice(start, start + slideSize).join('\n')
+      return {
+        id: `${section.id}-${index}`,
+        label: section.label,
+        part: index + 1,
+        content,
+      }
+    })
+  })
+}
+
+export default function SongsPage({ onProject }) {
   const [songs, setSongs] = useState(starterSongs)
   const [searchTerm, setSearchTerm] = useState('')
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -66,9 +106,11 @@ export default function SongsPage() {
   const [openMenuId, setOpenMenuId] = useState(null)
   const [activeSongId, setActiveSongId] = useState(null)
   const [projectedSlideId, setProjectedSlideId] = useState(null)
+  const [linesPerSlide, setLinesPerSlide] = useState('all')
 
   const activeSong = songs.find((song) => song.id === activeSongId)
   const slideSections = activeSong ? parseSongSections(activeSong.lyrics) : []
+  const projectionSlides = createProjectionSlides(slideSections, linesPerSlide)
   const filteredSongs = songs.filter((song) =>
     `${song.title} ${song.artist}`.toLowerCase().includes(searchTerm.trim().toLowerCase()),
   )
@@ -92,11 +134,10 @@ export default function SongsPage() {
   }
 
   function projectSlideToAudience(content, slideId) {
-    setProjectedSlideId(slideId)
+    if (!content.trim()) return
 
-    if (typeof window.require === 'function') {
-      window.require('electron').ipcRenderer.send('update-projection', content)
-    }
+    setProjectedSlideId(slideId)
+    onProject(content)
   }
 
   function openEditor(song = null) {
@@ -203,14 +244,31 @@ export default function SongsPage() {
                   <div>
                     <h2 className="text-sm font-semibold text-zinc-100">Projection slides</h2>
                     <p className="mt-1 text-[11px] text-zinc-500">
-                      {slideSections.length} {slideSections.length === 1 ? 'section' : 'sections'}
+                      {projectionSlides.length} {projectionSlides.length === 1 ? 'slide' : 'slides'}
                     </p>
                   </div>
+                  <label className="flex items-center gap-2 text-[11px] text-zinc-400">
+                    Lyrics per slide
+                    <select
+                      value={linesPerSlide}
+                      onChange={(event) => {
+                        setLinesPerSlide(event.target.value)
+                        setProjectedSlideId(null)
+                      }}
+                      aria-label="Lyrics per projection slide"
+                      className="h-8 rounded-md border border-zinc-700 bg-zinc-950 px-2 text-xs text-zinc-100 outline-none focus:border-sky-600"
+                    >
+                      <option value="all">Full section</option>
+                      <option value="2">2 lines</option>
+                      <option value="3">3 lines</option>
+                      <option value="4">4 lines</option>
+                    </select>
+                  </label>
                 </div>
-                {slideSections.length > 0 ? (
+                {projectionSlides.length > 0 ? (
                   <div className="grid gap-3 sm:grid-cols-2">
-                    {slideSections.map((section) => {
-                      const slideId = `${activeSong.id}-${section.id}`
+                    {projectionSlides.map((slide, index) => {
+                      const slideId = `${activeSong.id}-${slide.id}`
                       const isProjected = projectedSlideId === slideId
 
                       return (
@@ -218,13 +276,8 @@ export default function SongsPage() {
                           key={slideId}
                           type="button"
                           aria-pressed={isProjected}
-                          aria-label={`Project ${section.label}`}
-                          onClick={() =>
-                            projectSlideToAudience(
-                              `${section.label}\n\n${section.content}`,
-                              slideId,
-                            )
-                          }
+                          aria-label={`Project ${slide.label}, slide ${slide.part}`}
+                          onClick={() => projectSlideToAudience(slide.content, slideId)}
                           className={`min-h-32 w-full cursor-pointer rounded border p-4 text-left transition ${
                             isProjected
                               ? 'border-2 border-blue-500 bg-blue-950/40'
@@ -232,10 +285,11 @@ export default function SongsPage() {
                           }`}
                         >
                           <span className="block text-xs font-semibold text-zinc-100">
-                            {section.label}
+                            {slide.label}
+                            {linesPerSlide !== 'all' && ` · Slide ${index + 1}`}
                           </span>
                           <span className="mt-2 block line-clamp-5 whitespace-pre-line text-xs leading-5 text-zinc-400">
-                            {section.content}
+                            {slide.content}
                           </span>
                           {isProjected && (
                             <span className="mt-3 block text-[10px] font-medium uppercase tracking-wide text-blue-300">

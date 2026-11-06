@@ -24,15 +24,8 @@ function AudienceView() {
   )
 
   useEffect(() => {
-    if (typeof window.require !== 'function') return undefined
-
-    const { ipcRenderer } = window.require('electron')
-    const handleProjection = (_event, content) => {
-      if (typeof content === 'string') setCurrentText(content)
-    }
-
-    ipcRenderer.on('render-slide', handleProjection)
-    return () => ipcRenderer.removeAllListeners('render-slide')
+    if (!window.churchCast) return undefined
+    return window.churchCast.onProjection(setCurrentText)
   }, [])
 
   return (
@@ -44,21 +37,21 @@ function AudienceView() {
   )
 }
 
-function renderTabContent(activeTab) {
+function renderTabContent(activeTab, onProject) {
   switch (activeTab) {
     case 'Live':
       return <LivePage />
     case 'Services':
       return <ServicesPage />
     case 'Songs':
-      return <SongsPage />
+      return <SongsPage onProject={onProject} />
     case 'Slides':
       return <SlidesPage />
     case 'Media':
       return <MediaPage />
     case 'Scripture':
     default:
-      return <ScripturePage />
+      return <ScripturePage onProject={onProject} />
   }
 }
 
@@ -112,8 +105,16 @@ function AdminPanel({ activeTab, onTabChange }) {
   const [stageMessage, setStageMessage] = useState('')
   const [audienceMessage, setAudienceMessage] = useState('')
   const [lastSentMessage, setLastSentMessage] = useState('')
+  const [audienceContent, setAudienceContent] = useState(
+    'For where two or three gather in my name',
+  )
   const durationSeconds = 240
   const tabs = ['Live', 'Services', 'Songs', 'Slides', 'Media', 'Scripture']
+
+  function projectToAudience(content) {
+    setAudienceContent(content)
+    window.churchCast?.projectSlide(content)
+  }
 
   useEffect(() => {
     if (!isPlaying) return undefined
@@ -132,7 +133,7 @@ function AdminPanel({ activeTab, onTabChange }) {
           <span className="grid size-8 place-items-center rounded-md bg-emerald-500 text-zinc-950">
             <Presentation size={17} strokeWidth={2.5} aria-hidden="true" />
           </span>
-          <span className="text-sm font-semibold text-white">Presenter</span>
+          <span className="text-sm font-semibold text-white">Church Cast</span>
         </div>
 
         <nav
@@ -222,7 +223,7 @@ function AdminPanel({ activeTab, onTabChange }) {
           aria-label="Page content workspace"
           className="h-full min-w-0 flex-1 overflow-y-auto p-4"
         >
-          {renderTabContent(activeTab)}
+          {renderTabContent(activeTab, projectToAudience)}
         </section>
 
         <aside className="flex h-full w-80 shrink-0 flex-col justify-between border-l border-zinc-800 bg-[#121212] p-3 text-zinc-100">
@@ -260,7 +261,7 @@ function AdminPanel({ activeTab, onTabChange }) {
               </div>
               <div className="grid aspect-video place-items-center rounded-b-md border border-t-0 border-zinc-800 bg-black px-4 text-center">
                 <p className="text-sm font-medium leading-5 text-zinc-200">
-                  For where two or three gather in my name
+                  {audienceContent}
                 </p>
               </div>
             </section>
