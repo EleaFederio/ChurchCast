@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react'
 import {
   ChevronDown,
   CircleDashed,
+  Image,
   Monitor,
+  MonitorPlay,
   Pause,
   Play,
   Presentation,
@@ -11,6 +13,7 @@ import {
   SkipBack,
   SkipForward,
 } from 'lucide-react'
+import { QRCodeSVG } from 'qrcode.react'
 import LivePage from './pages/LivePage.jsx'
 import ServicesPage from './pages/ServicesPage.jsx'
 import SongsPage from './pages/SongsPage.jsx'
@@ -22,36 +25,155 @@ function AudienceView() {
   const [currentText, setCurrentText] = useState(
     'For where two or three gather in my name, there am I with them.',
   )
+  const [displayMode, setDisplayMode] = useState('live')
 
   useEffect(() => {
     if (!window.churchCast) return undefined
-    return window.churchCast.onProjection(setCurrentText)
+    const unsubscribeProjection = window.churchCast.onProjection(setCurrentText)
+    const unsubscribeMode = window.churchCast.onAudienceMode(setDisplayMode)
+    window.churchCast.readyAudience()
+    return () => {
+      unsubscribeProjection()
+      unsubscribeMode()
+    }
   }, [])
 
+  if (displayMode === 'black') {
+    return <main className="absolute inset-0 h-screen w-screen bg-black" />
+  }
+
   return (
-    <main className="absolute inset-0 flex h-screen w-screen flex-col items-center justify-center overflow-hidden bg-black p-12 text-white select-none">
-      <p className="max-w-6xl whitespace-pre-line text-center text-5xl font-bold leading-relaxed tracking-wide drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)] md:text-7xl">
-        {currentText}
-      </p>
+    <main className="absolute inset-0 h-screen w-screen overflow-hidden bg-black text-white select-none">
+      {renderProjection(currentText)}
     </main>
   )
 }
 
-function renderTabContent(activeTab, onProject) {
+function renderMedia(media, className) {
+  if (!media?.src) return null
+  if (media.type === 'video') {
+    return (
+      <video
+        src={media.src}
+        aria-label={media.name || 'Audience video'}
+        className={className}
+        autoPlay
+        loop
+        muted
+        playsInline
+      />
+    )
+  }
+  return <img src={media.src} alt={media.name || 'Audience photo'} className={className} />
+}
+
+function renderProjection(content, isPreview = false) {
+  if (content && typeof content === 'object' && content.type === 'scripture') {
+    return (
+      <div className={`relative flex h-full w-full flex-col overflow-hidden bg-white text-zinc-900 ${isPreview ? '' : 'px-[4.5vw] py-[4vh]'}`}>
+        {content.background && renderMedia(
+          content.background,
+          'absolute inset-0 size-full object-cover',
+        )}
+        <header
+          className={`relative z-10 flex shrink-0 items-center justify-between gap-4 ${
+            isPreview ? 'px-2 py-1 text-[6px]' : 'text-[clamp(1rem,2.4vw,2rem)]'
+          }`}
+        >
+          <span className="font-normal">{content.reference}</span>
+          <span className="text-right font-normal">{content.version}</span>
+        </header>
+        <div className="relative z-10 flex min-h-0 flex-1 items-center justify-center px-[3vw] text-center">
+          <p
+            className={`max-w-full font-bold leading-[1.05] ${
+              isPreview
+                ? 'text-[10px]'
+                : 'text-[clamp(2rem,5.8vw,5rem)]'
+            }`}
+          >
+            {content.verses.map((verse, index) => (
+              <span key={`${verse.number}-${index}`}>
+                <sup className={`mr-[0.12em] font-semibold ${isPreview ? 'text-[0.6em]' : 'text-[0.58em]'}`}>
+                  {verse.number}
+                </sup>
+                {verse.content}
+                {index < content.verses.length - 1 ? ' ' : ''}
+              </span>
+            ))}
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  if (content && typeof content === 'object' && content.type === 'media') {
+    return (
+      <div className={`relative flex h-full w-full items-center justify-center overflow-hidden bg-black ${isPreview ? '' : 'p-12'}`}>
+        {renderMedia(
+          content.media,
+          isPreview ? 'max-h-full max-w-full object-contain' : 'h-full w-full object-contain',
+        )}
+      </div>
+    )
+  }
+
+  if (content && typeof content === 'object' && content.type === 'text') {
+    const text = content.content
+    const background = content.background
+    return (
+      <div className="relative flex h-full w-full items-center justify-center overflow-hidden text-center">
+        {background && renderMedia(background, 'absolute inset-0 size-full object-cover')}
+        <p
+          className={
+            isPreview
+              ? 'relative z-10 text-sm font-medium leading-5 text-zinc-100 drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]'
+              : `relative z-10 max-w-6xl whitespace-pre-line text-5xl font-bold leading-relaxed tracking-wide drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)] md:text-7xl ${background ? 'p-12' : ''}`
+          }
+        >
+          {text}
+        </p>
+      </div>
+    )
+  }
+
+  if (content && typeof content === 'object' && content.type === 'image') {
+    return renderMedia(
+      content,
+      isPreview ? 'max-h-full max-w-full object-contain' : 'h-full w-full object-contain p-12',
+    )
+  }
+
+  const text = typeof content === 'string' ? content : ''
+  return (
+    <div className={`flex h-full w-full items-center justify-center text-center ${isPreview ? '' : 'p-12'}`}>
+      <p
+      className={
+        isPreview
+          ? 'text-sm font-medium leading-5 text-zinc-200'
+          : 'max-w-6xl whitespace-pre-line text-center text-5xl font-bold leading-relaxed tracking-wide drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)] md:text-7xl'
+      }
+      >
+        {text}
+      </p>
+    </div>
+  )
+}
+
+function renderTabContent(activeTab, { projectText, mediaPageProps }) {
   switch (activeTab) {
     case 'Live':
       return <LivePage />
     case 'Services':
       return <ServicesPage />
     case 'Songs':
-      return <SongsPage onProject={onProject} />
+      return <SongsPage onProject={(content) => projectText(content, 'song')} />
     case 'Slides':
       return <SlidesPage />
     case 'Media':
-      return <MediaPage />
+      return <MediaPage {...mediaPageProps} />
     case 'Scripture':
     default:
-      return <ScripturePage onProject={onProject} />
+      return <ScripturePage onProject={(content) => projectText(content, 'scripture')} />
   }
 }
 
@@ -108,13 +230,75 @@ function AdminPanel({ activeTab, onTabChange }) {
   const [audienceContent, setAudienceContent] = useState(
     'For where two or three gather in my name',
   )
+  const [mediaFiles, setMediaFiles] = useState([])
+  const [backgrounds, setBackgrounds] = useState({ song: null, scripture: null })
+  const [baseMedia, setBaseMedia] = useState(null)
+  const [audienceMode, setAudienceModeState] = useState('live')
+  const [lastTextProjection, setLastTextProjection] = useState(
+    'For where two or three gather in my name',
+  )
   const durationSeconds = 240
   const tabs = ['Live', 'Services', 'Songs', 'Slides', 'Media', 'Scripture']
 
-  function projectToAudience(content) {
-    setAudienceContent(content)
-    window.churchCast?.projectSlide(content)
+  function sendProjection(projection) {
+    setAudienceContent(projection)
+    window.churchCast?.projectSlide(projection)
   }
+
+  function setAudienceMode(mode) {
+    setAudienceModeState(mode)
+    window.churchCast?.setAudienceMode(mode)
+  }
+
+  function showAudienceDisplay() {
+    window.churchCast?.showAudience()
+    if (!window.churchCast) {
+      window.open(`${window.location.origin}/#/audience`, 'churchcast-audience')
+    }
+  }
+
+  function projectText(content, context) {
+    if (context === 'scripture' && content?.type === 'scripture') {
+      const projection = {
+        ...content,
+        background: backgrounds.scripture,
+      }
+      setLastTextProjection(projection)
+      sendProjection(baseMedia ? { type: 'media', media: baseMedia } : projection)
+      return
+    }
+
+    const projection = {
+      type: 'text',
+      content,
+      background: backgrounds[context],
+    }
+    setLastTextProjection(projection)
+    sendProjection(baseMedia ? { type: 'media', media: baseMedia } : projection)
+  }
+
+  function setBase(media) {
+    setBaseMedia(media)
+    sendProjection({ type: 'media', media })
+  }
+
+  function clearBase() {
+    setBaseMedia(null)
+    sendProjection(lastTextProjection)
+  }
+
+  const mediaPageProps = {
+    mediaFiles,
+    onUpload: (uploads) => setMediaFiles((current) => [...current, ...uploads]),
+    onProject: (media) => sendProjection({ type: 'media', media }),
+    onSetBackground: (context, media) =>
+      setBackgrounds((current) => ({ ...current, [context]: media })),
+    onSetBase: setBase,
+    onClearBase: clearBase,
+    backgrounds,
+    baseMedia,
+  }
+  const tabProps = { projectText, mediaPageProps }
 
   useEffect(() => {
     if (!isPlaying) return undefined
@@ -223,7 +407,7 @@ function AdminPanel({ activeTab, onTabChange }) {
           aria-label="Page content workspace"
           className="h-full min-w-0 flex-1 overflow-y-auto p-4"
         >
-          {renderTabContent(activeTab, projectToAudience)}
+          {renderTabContent(activeTab, tabProps)}
         </section>
 
         <aside className="flex h-full w-80 shrink-0 flex-col justify-between border-l border-zinc-800 bg-[#121212] p-3 text-zinc-100">
@@ -260,9 +444,79 @@ function AdminPanel({ activeTab, onTabChange }) {
                 )}
               </div>
               <div className="grid aspect-video place-items-center rounded-b-md border border-t-0 border-zinc-800 bg-black px-4 text-center">
-                <p className="text-sm font-medium leading-5 text-zinc-200">
-                  {audienceContent}
-                </p>
+                {audienceMode === 'black' ? (
+                  <div aria-label="Audience output is black" className="size-full bg-black" />
+                ) : (
+                  renderProjection(audienceContent, true)
+                )}
+              </div>
+            </section>
+
+            <section aria-label="Audience display controls" className="space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={showAudienceDisplay}
+                  className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-sky-600 px-2 text-xs font-medium text-white transition hover:bg-sky-500"
+                >
+                  <MonitorPlay size={14} aria-hidden="true" />
+                  Show Display
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={audienceMode === 'freeze'}
+                  onClick={() => setAudienceMode(audienceMode === 'freeze' ? 'live' : 'freeze')}
+                  className={`inline-flex h-9 items-center justify-center gap-2 rounded-md px-2 text-xs font-medium transition ${
+                    audienceMode === 'freeze'
+                      ? 'bg-amber-500 text-zinc-950 hover:bg-amber-400'
+                      : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'
+                  }`}
+                >
+                  <Pause size={13} aria-hidden="true" />
+                  {audienceMode === 'freeze' ? 'Unfreeze' : 'Freeze'}
+                </button>
+                <button
+                  type="button"
+                  disabled={!baseMedia}
+                  onClick={() => {
+                    if (!baseMedia) return
+                    sendProjection({ type: 'media', media: baseMedia })
+                    setAudienceMode('live')
+                  }}
+                  className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-zinc-800 px-2 text-xs font-medium text-zinc-200 transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Image size={14} aria-hidden="true" />
+                  Base
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={audienceMode === 'black'}
+                  onClick={() => setAudienceMode(audienceMode === 'black' ? 'live' : 'black')}
+                  className={`inline-flex h-9 items-center justify-center gap-2 rounded-md px-2 text-xs font-medium transition ${
+                    audienceMode === 'black'
+                      ? 'bg-zinc-100 text-zinc-950 hover:bg-white'
+                      : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'
+                  }`}
+                >
+                  <span className="size-3 rounded-full border border-current bg-black" aria-hidden="true" />
+                  {audienceMode === 'black' ? 'Show Output' : 'Black'}
+                </button>
+              </div>
+              <div className="flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-900/70 p-2.5">
+                <QRCodeSVG
+                  value={`${window.location.origin}/#/audience`}
+                  size={76}
+                  level="M"
+                  bgColor="#ffffff"
+                  fgColor="#09090b"
+                  aria-label="QR code for audience display"
+                />
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-zinc-200">Audience display QR</p>
+                  <p className="mt-1 break-all text-[10px] leading-4 text-zinc-500">
+                    Scan to open the audience view
+                  </p>
+                </div>
               </div>
             </section>
 

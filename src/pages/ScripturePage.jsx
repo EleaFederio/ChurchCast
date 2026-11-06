@@ -226,6 +226,7 @@ export default function ScripturePage({ onProject }) {
               reference:
                 result.reference ||
                 formatReference(selectedBook, selectedChapter, verse),
+              verseNumber: verse.title,
               content: result.content,
             }
           }),
@@ -248,11 +249,19 @@ export default function ScripturePage({ onProject }) {
     const slide = verseSlides[slideIndex]
     if (!slide?.length) return
     setActiveSlideIndex(slideIndex)
-    const reference = `${slide[0].reference}–${slide[slide.length - 1].reference}`
-    const slideText = slide
-      .map((passage) => `${passage.reference}\n${passage.content}`)
-      .join('\n\n')
-    onProject(`${reference} (${selectedBible.abbreviation || selectedBible.title})\n\n${slideText}`)
+    const reference =
+      slide.length === 1
+        ? slide[0].reference
+        : `${slide[0].reference}–${slide[slide.length - 1].reference}`
+    onProject({
+      type: 'scripture',
+      reference,
+      version: selectedBible.localized_title || selectedBible.title,
+      verses: slide.map((passage) => ({
+        number: passage.verseNumber,
+        content: passage.content,
+      })),
+    })
   }
 
   const savedBibleIds = new Set(savedBibles.map((bible) => String(bible.id)))
