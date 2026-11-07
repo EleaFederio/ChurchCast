@@ -41,6 +41,8 @@ function readMediaFile(file) {
 
 export default function MediaPage({
   mediaFiles,
+  isLoadingMedia,
+  mediaStorageError,
   onUpload,
   onProject,
   onSetBackground,
@@ -103,15 +105,15 @@ export default function MediaPage({
           src: await readMediaFile(file),
         })),
       )
-      if (uploads.length) onUpload(uploads)
+      if (uploads.length) await onUpload(uploads)
       if (invalidNames.length) {
         setError(`Unsupported file${invalidNames.length > 1 ? 's' : ''}: ${invalidNames.join(', ')}. Use JPEG, PNG, or MP4.`)
       } else {
         setIsModalOpen(false)
       }
     } catch (readError) {
-      console.error('Unable to read the selected media files.', readError)
-      setError(readError.message || 'Unable to read the selected files.')
+      console.error('Unable to upload the selected media files.', readError)
+      setError(readError.message || 'Unable to upload the selected files.')
     } finally {
       setIsReading(false)
     }
@@ -123,6 +125,17 @@ export default function MediaPage({
       <p className="mt-2 max-w-xl text-sm text-zinc-400">
         Upload JPEG, PNG, or MP4 files to display them or use them as backgrounds.
       </p>
+
+      {mediaStorageError && (
+        <p role="alert" className="mt-4 rounded-md border border-red-900/60 bg-red-950/30 p-3 text-xs text-red-300">
+          {mediaStorageError}
+        </p>
+      )}
+      {isLoadingMedia && (
+        <p role="status" className="mt-4 text-xs text-zinc-500">
+          Loading saved media...
+        </p>
+      )}
 
       {mediaFiles.length ? (
         <section aria-label="Uploaded media" className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -252,6 +265,7 @@ export default function MediaPage({
           setError('')
           setIsModalOpen(true)
         }}
+        disabled={isLoadingMedia}
         className="fixed bottom-6 right-[21rem] z-20 grid size-14 place-items-center rounded-full bg-sky-500 text-white shadow-lg shadow-black/40 transition hover:bg-sky-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-300"
       >
         <ImagePlus size={23} aria-hidden="true" />

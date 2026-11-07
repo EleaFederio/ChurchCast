@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import {
   ArrowLeft,
+  ChevronDown,
+  ChevronUp,
   EllipsisVertical,
   Music2,
   Pencil,
@@ -17,6 +19,16 @@ const starterSongs = [
   { id: 'song-4', title: 'In Christ Alone', artist: 'Keith Getty & Stuart Townend' },
 ]
 const SAVED_SONGS_KEY = 'churchcast.songs'
+const SHARP_NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+const FLAT_NOTES = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B']
+const TRANSPOSITION_KEYS = [
+  'C', 'C#', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B',
+]
+const NOTE_VALUES = {
+  C: 0, 'B#': 0, 'C#': 1, Db: 1, D: 2, 'D#': 3, Eb: 3, E: 4, Fb: 4,
+  'E#': 5, F: 5, 'F#': 6, Gb: 6, G: 7, 'G#': 8, Ab: 8, A: 9, 'A#': 10,
+  Bb: 10, B: 11, Cb: 11,
+}
 
 function readSavedSongs() {
   const savedSongs = window.localStorage.getItem(SAVED_SONGS_KEY)
@@ -69,41 +81,102 @@ function parseSongSections(lyrics = '') {
     .map((section, index) => ({ ...section, id: `slide-${index}` }))
 }
 
-function removeChordLines(content) {
+function isChordLine(line) {
   const chordPattern =
     /^[A-G](?:#|b)?(?:maj|min|m|M|dim|aug|sus\d*|add\d*)?(?:\d+(?:sus\d*|add\d*|b\d+|#\d+)?)*(?:\([^)]*\))?(?:\/[A-G](?:#|b)?)?$/i
 
-  return content
-    .split(/\r?\n/)
-    .filter((line) => {
-      const chordTokens = line
-        .replace(/[|[\]()]/g, ' ')
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean)
-
-      return !chordTokens.length || !chordTokens.every((token) => chordPattern.test(token))
-    })
-    .join('\n')
+  const chordTokens = line
+    .replace(/[|[\]()]/g, ' ')
     .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+
+  return chordTokens.length > 0 && chordTokens.every((token) => chordPattern.test(token))
+}
+
+function getKeyInfo(key) {
+  const match = key?.match(/^\s*([A-G])([#b]?)(.*)$/)
+  if (!match) return null
+  const note = `${match[1].toUpperCase()}${match[2]}`
+  if (NOTE_VALUES[note] === undefined) return null
+  return { note, suffix: match[3] }
+}
+
+function transposeChordToken(token, semitones, preferFlats) {
+  const bassMatch = token.match(/\/([A-G][#b]?)$/)
+  const chord = bassMatch ? token.slice(0, bassMatch.index) : token
+  const rootMatch = chord.match(/^([A-G])([#b]?)(.*)$/)
+  if (!rootMatch) return token
+
+  const root = `${rootMatch[1].toUpperCase()}${rootMatch[2]}`
+  const rootValue = NOTE_VALUES[root]
+  if (rootValue === undefined) return token
+  const notes = preferFlats ? FLAT_NOTES : SHARP_NOTES
+  const transposedRoot = notes[((rootValue + semitones) % 12 + 12) % 12]
+  const transposedBass = bassMatch
+    ? `/${notes[((NOTE_VALUES[bassMatch[1]] + semitones) % 12 + 12) % 12]}`
+    : ''
+
+  return `${transposedRoot}${rootMatch[3]}${transposedBass}`
+}
+
+function transposeLyrics(lyrics, semitones, preferFlats) {
+  return lyrics
+    .split(/\r?\n/)
+    .map((line) =>
+      isChordLine(line)
+        ? line.replace(/\S+/g, (token) => transposeChordToken(token, semitones, preferFlats))
+        : line,
+    )
+    .join('\n')
+}
+
+function transposeKey(key, semitones, preferredName) {
+  const keyInfo = getKeyInfo(key)
+  if (!keyInfo) return key
+  const targetValue = preferredName
+    ? NOTE_VALUES[preferredName]
+    : (NOTE_VALUES[keyInfo.note] + semitones + 12) % 12
+  const preferFlats = preferredName
+    ? preferredName.includes('b')
+    : keyInfo.note.includes('b')
+  const notes = preferFlats ? FLAT_NOTES : SHARP_NOTES
+  return `${preferredName || notes[targetValue]}${keyInfo.suffix}`
+}
+
+function parseMusicianLines(content) {
+  const lines = []
+  let chords = ''
+
+  for (const line of content.split(/\r?\n/)) {
+    if (!line.trim()) continue
+    if (isChordLine(line)) {
+      chords = line
+      continue
+    }
+
+    lines.push({ chords, lyrics: line })
+    chords = ''
+  }
+
+  return lines
 }
 
 function createProjectionSlides(sections, linesPerSlide) {
   return sections.flatMap((section) => {
-    const lyrics = removeChordLines(section.content)
-    if (!lyrics) return []
-
-    const lines = lyrics.split(/\r?\n/).filter((line) => line.trim())
+    const lines = parseMusicianLines(section.content)
+    if (!lines.length) return []
     const slideSize = linesPerSlide === 'all' ? lines.length : Number(linesPerSlide)
 
     return Array.from({ length: Math.ceil(lines.length / slideSize) }, (_, index) => {
       const start = index * slideSize
-      const content = lines.slice(start, start + slideSize).join('\n')
+      const slideLines = lines.slice(start, start + slideSize)
       return {
         id: `${section.id}-${index}`,
         label: section.label,
         part: index + 1,
-        content,
+        content: slideLines.map((line) => line.lyrics).join('\n'),
+        musicianLines: slideLines,
       }
     })
   })
@@ -124,8 +197,10 @@ export default function SongsPage({
   const [openMenuId, setOpenMenuId] = useState(null)
   const [activeSongId, setActiveSongId] = useState(null)
   const [projectedSlideId, setProjectedSlideId] = useState(null)
+  const [isTransposing, setIsTransposing] = useState(false)
 
   const activeSong = songs.find((song) => song.id === activeSongId)
+  const activeSongKey = getKeyInfo(activeSong?.key)
   const slideSections = activeSong ? parseSongSections(activeSong.lyrics) : []
   const projectionSlides = createProjectionSlides(slideSections, songDisplaySettings.linesPerSlide)
   const filteredSongs = songs.filter((song) =>
@@ -187,6 +262,49 @@ export default function SongsPage({
     setSongs(nextSongs)
   }
 
+  async function transposeActiveSong(semitones, preferredKey) {
+    if (!activeSong || isTransposing) return
+    const keyInfo = getKeyInfo(activeSong.key)
+    if (preferredKey && !keyInfo) return
+
+    const nextKey = transposeKey(activeSong.key, semitones, preferredKey)
+    const updatedSong = {
+      ...activeSong,
+      lyrics: transposeLyrics(activeSong.lyrics || '', semitones, nextKey.includes('b')),
+      key: nextKey,
+    }
+
+    setIsTransposing(true)
+    setStorageError('')
+    try {
+      await handleUpdateSong(updatedSong)
+      const currentSlide = projectedSlideId?.startsWith(`${activeSong.id}-`)
+        ? createProjectionSlides(
+            parseSongSections(updatedSong.lyrics),
+            songDisplaySettings.linesPerSlide,
+          ).find((slide) => `${activeSong.id}-${slide.id}` === projectedSlideId)
+        : null
+      if (currentSlide) {
+        onProject({
+          content: currentSlide.content,
+          musician: {
+            title: updatedSong.title,
+            artist: updatedSong.artist,
+            key: updatedSong.key,
+            tempo: updatedSong.tempo || '',
+            section: currentSlide.label,
+            lines: currentSlide.musicianLines,
+          },
+        })
+      }
+    } catch (error) {
+      console.error('Unable to transpose the song.', error)
+      setStorageError(error.message || 'Unable to transpose the song.')
+    } finally {
+      setIsTransposing(false)
+    }
+  }
+
   async function handleDeleteSong(songId) {
     const nextSongs = songs.filter((song) => song.id !== songId)
     if (window.churchCast?.songs) await window.churchCast.songs.delete(songId)
@@ -195,11 +313,21 @@ export default function SongsPage({
     setActiveSongId((currentId) => (currentId === songId ? null : currentId))
   }
 
-  function projectSlideToAudience(content, slideId) {
-    if (!content.trim()) return
+  function projectSlideToAudience(slide, slideId) {
+    if (!slide.content.trim()) return
 
     setProjectedSlideId(slideId)
-    onProject(content)
+    onProject({
+      content: slide.content,
+      musician: {
+        title: activeSong.title,
+        artist: activeSong.artist,
+        key: activeSong.key || '',
+        tempo: activeSong.tempo || '',
+        section: slide.label,
+        lines: slide.musicianLines,
+      },
+    })
   }
 
   function openEditor(song = null) {
@@ -378,6 +506,61 @@ export default function SongsPage({
                 </p>
                 <h2 className="mt-2 text-lg font-semibold text-zinc-100">{activeSong.title}</h2>
                 <p className="mt-1 text-sm text-zinc-400">{activeSong.artist}</p>
+                <section
+                  aria-label="Transpose song chords"
+                  className="mt-4 rounded-md border border-zinc-800 bg-zinc-950/60 p-3"
+                >
+                  <p className="text-xs font-medium text-zinc-300">Transpose chords</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      aria-label="Transpose down one semitone"
+                      title="Transpose down one semitone"
+                      disabled={isTransposing}
+                      onClick={() => void transposeActiveSong(-1)}
+                      className="inline-flex h-9 items-center gap-1 rounded-md border border-zinc-700 px-2.5 text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
+                    >
+                      <ChevronDown size={15} aria-hidden="true" />
+                      -½
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Transpose up one semitone"
+                      title="Transpose up one semitone"
+                      disabled={isTransposing}
+                      onClick={() => void transposeActiveSong(1)}
+                      className="inline-flex h-9 items-center gap-1 rounded-md border border-zinc-700 px-2.5 text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
+                    >
+                      <ChevronUp size={15} aria-hidden="true" />
+                      +½
+                    </button>
+                    <label className="min-w-32 flex-1 text-[10px] text-zinc-500">
+                      Target key
+                      <select
+                        value={activeSongKey?.note || ''}
+                        disabled={!activeSongKey || isTransposing}
+                        onChange={(event) => {
+                          const targetKey = event.target.value
+                          const semitones =
+                            ((NOTE_VALUES[targetKey] - NOTE_VALUES[activeSongKey.note] + 6) % 12) - 6
+                          void transposeActiveSong(semitones, targetKey)
+                        }}
+                        aria-label="Transpose song to key"
+                        className="mt-1 h-8 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100 disabled:opacity-50"
+                      >
+                        {!activeSongKey && <option value="">Set song key first</option>}
+                        {TRANSPOSITION_KEYS.map((key) => (
+                          <option key={key} value={key}>
+                            {key}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <p className="mt-2 text-[10px] leading-4 text-zinc-500">
+                    Chords and key are saved to the song library. Lyrics shown to the audience are unchanged.
+                  </p>
+                </section>
                 <dl className="mt-4 grid grid-cols-2 gap-3 border-t border-zinc-800 pt-3 text-xs">
                   <div>
                     <dt className="text-zinc-500">Composer</dt>
@@ -438,7 +621,7 @@ export default function SongsPage({
                           type="button"
                           aria-pressed={isProjected}
                           aria-label={`Project ${slide.label}, slide ${slide.part}`}
-                          onClick={() => projectSlideToAudience(slide.content, slideId)}
+                          onClick={() => projectSlideToAudience(slide, slideId)}
                           className={`min-h-32 w-full cursor-pointer rounded border p-4 text-left transition ${
                             isProjected
                               ? 'border-2 border-blue-500 bg-blue-950/40'

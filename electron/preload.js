@@ -74,6 +74,27 @@ contextBridge.exposeInMainWorld('churchCast', {
   readyAudience() {
     ipcRenderer.send('audience-ready')
   },
+  getAudienceDisplaySize() {
+    return ipcRenderer.invoke('get-audience-display-size')
+  },
+  getMusicianCompanionInfo() {
+    return ipcRenderer.invoke('get-musician-companion-info')
+  },
+  onAudienceDisplaySize(callback) {
+    const listener = (_event, size) => {
+      if (
+        size &&
+        Number.isFinite(size.width) &&
+        size.width > 0 &&
+        Number.isFinite(size.height) &&
+        size.height > 0
+      ) {
+        callback(size)
+      }
+    }
+    ipcRenderer.on('audience-display-size', listener)
+    return () => ipcRenderer.removeListener('audience-display-size', listener)
+  },
   youversion: {
     listBibles: (options) => ipcRenderer.invoke('youversion:list-bibles', options),
     getIndex: (bibleId) => ipcRenderer.invoke('youversion:get-index', bibleId),
@@ -85,5 +106,9 @@ contextBridge.exposeInMainWorld('churchCast', {
     delete: (songId) => ipcRenderer.invoke('songs:delete', songId),
     getSettings: () => ipcRenderer.invoke('songs:get-settings'),
     saveSettings: (settings) => ipcRenderer.invoke('songs:save-settings', settings),
+  },
+  media: {
+    list: () => ipcRenderer.invoke('media:list'),
+    saveMany: (mediaItems) => ipcRenderer.invoke('media:save-many', mediaItems),
   },
 })

@@ -20,6 +20,7 @@ import SongsPage from './pages/SongsPage.jsx'
 import SlidesPage from './pages/SlidesPage.jsx'
 import MediaPage from './pages/MediaPage.jsx'
 import ScripturePage from './pages/ScripturePage.jsx'
+import MusicianPage from './pages/MusicianPage.jsx'
 
 function AudienceView() {
   const [currentText, setCurrentText] = useState(
@@ -268,15 +269,24 @@ function MessageComposer({ id, label, value, onChange, onSend }) {
 function AdminPanel({ activeTab, onTabChange }) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [isOutputMenuOpen, setIsOutputMenuOpen] = useState(false)
+  const [musicianInfo, setMusicianInfo] = useState(null)
+  const [musicianInfoError, setMusicianInfoError] = useState('')
+  const [musicianAddress, setMusicianAddress] = useState('')
   const [isPlaying, setIsPlaying] = useState(false)
   const [playbackSeconds, setPlaybackSeconds] = useState(0)
   const [stageMessage, setStageMessage] = useState('')
   const [audienceMessage, setAudienceMessage] = useState('')
+  const [audienceDisplaySize, setAudienceDisplaySize] = useState({
+    width: window.screen.width,
+    height: window.screen.height,
+  })
   const [lastSentMessage, setLastSentMessage] = useState('')
   const [audienceContent, setAudienceContent] = useState(
     'For where two or three gather in my name',
   )
   const [mediaFiles, setMediaFiles] = useState([])
+  const [isLoadingMedia, setIsLoadingMedia] = useState(true)
+  const [mediaStorageError, setMediaStorageError] = useState('')
   const [backgrounds, setBackgrounds] = useState({ song: null, scripture: null })
   const [baseMedia, setBaseMedia] = useState(null)
   const [audienceMode, setAudienceModeState] = useState('live')
@@ -293,6 +303,108 @@ function AdminPanel({ activeTab, onTabChange }) {
   )
   const durationSeconds = 240
   const tabs = ['Live', 'Services', 'Songs', 'Slides', 'Media', 'Scripture']
+  const companionUnavailable =
+    typeof window.churchCast?.getMusicianCompanionInfo !== 'function'
+  const selectedMusicianAddress =
+    musicianInfo?.addresses?.find((item) => item.address === musicianAddress) ||
+    musicianInfo?.addresses?.find((item) => /wi-?fi/i.test(item.name)) ||
+    musicianInfo?.addresses?.[0]
+  const musicianUrl = selectedMusicianAddress
+    ? `http://${selectedMusicianAddress.address}:${musicianInfo.appPort}/?token=${encodeURIComponent(musicianInfo.token)}&apiPort=${musicianInfo.apiPort}#/musician`
+    : ''
+
+  useEffect(() => {
+    const getInfo = window.churchCast?.getMusicianCompanionInfo
+    if (typeof getInfo !== 'function') return undefined
+
+    let cancelled = false
+    getInfo()
+      .then((info) => {
+        if (!cancelled) {
+          setMusicianInfo(info)
+          setMusicianAddress(
+            (info.addresses.find((item) => /wi-?fi/i.test(item.name)) ||
+              info.addresses[0])?.address || '',
+          )
+          setMusicianInfoError('')
+        }
+      })
+      .catch((error) => {
+        console.error('Unable to get musician monitor connection details.', error)
+        if (!cancelled) {
+          setMusicianInfoError(error.message || 'Unable to start the musician monitor.')
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    const getDisplaySize = window.churchCast?.getAudienceDisplaySize
+
+    if (typeof getDisplaySize !== 'function') return undefined
+
+    const unsubscribe = window.churchCast.onAudienceDisplaySize((size) => {
+      setAudienceDisplaySize(size)
+    })
+
+    getDisplaySize()
+      .then((size) => {
+        if (
+          !cancelled &&
+          size &&
+          Number.isFinite(size.width) &&
+          size.width > 0 &&
+          Number.isFinite(size.height) &&
+          size.height > 0
+        ) {
+          setAudienceDisplaySize(size)
+        }
+      })
+      .catch((error) => {
+        console.error('Unable to get audience display dimensions.', error)
+      })
+
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadMedia() {
+      try {
+        const loadedMedia = window.churchCast?.media
+          ? await window.churchCast.media.list()
+          : JSON.parse(window.localStorage.getItem('churchcast.media') || '[]')
+        if (!Array.isArray(loadedMedia)) {
+          throw new Error('The saved media library has an invalid format.')
+        }
+        if (!cancelled) {
+          setMediaFiles(loadedMedia)
+          setMediaStorageError('')
+        }
+      } catch (error) {
+        console.error('Unable to load the media library.', error)
+        if (!cancelled) {
+          setMediaStorageError(error.message || 'Unable to load the media library.')
+        }
+      } finally {
+        if (!cancelled) setIsLoadingMedia(false)
+      }
+    }
+
+    void loadMedia()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -352,9 +464,10 @@ function AdminPanel({ activeTab, onTabChange }) {
     if (context === 'song') {
       const projection = {
         type: 'song',
-        content,
+        content: typeof content === 'string' ? content : content.content,
         background: backgrounds.song,
         settings: songDisplaySettings,
+        musician: typeof content === 'string' ? undefined : content.musician,
       }
       setLastTextProjection(projection)
       sendProjection(baseMedia ? { type: 'media', media: baseMedia } : projection)
@@ -392,7 +505,20 @@ function AdminPanel({ activeTab, onTabChange }) {
 
   const mediaPageProps = {
     mediaFiles,
-    onUpload: (uploads) => setMediaFiles((current) => [...current, ...uploads]),
+    isLoadingMedia,
+    mediaStorageError,
+    onUpload: async (uploads) => {
+      const savedMedia = window.churchCast?.media
+        ? await window.churchCast.media.saveMany(uploads)
+        : (() => {
+            const currentMedia = JSON.parse(window.localStorage.getItem('churchcast.media') || '[]')
+            const nextMedia = [...currentMedia, ...uploads]
+            window.localStorage.setItem('churchcast.media', JSON.stringify(nextMedia))
+            return uploads
+          })()
+      setMediaFiles((current) => [...current, ...savedMedia])
+      setMediaStorageError('')
+    },
     onProject: (media) => sendProjection({ type: 'media', media }),
     onSetBackground: (context, media) =>
       setBackgrounds((current) => ({ ...current, [context]: media })),
@@ -586,7 +712,11 @@ function AdminPanel({ activeTab, onTabChange }) {
                   </div>
                 )}
               </div>
-              <div className="grid aspect-video place-items-center rounded-b-md border border-t-0 border-zinc-800 bg-black px-4 text-center">
+              <div
+                className="grid place-items-center rounded-b-md border border-t-0 border-zinc-800 bg-black px-4 text-center"
+                style={{ aspectRatio: `${audienceDisplaySize.width} / ${audienceDisplaySize.height}` }}
+                aria-label={`Audience output preview at ${audienceDisplaySize.width} by ${audienceDisplaySize.height}`}
+              >
                 {audienceMode === 'black' ? (
                   <div aria-label="Audience output is black" className="size-full bg-black" />
                 ) : (
@@ -645,20 +775,56 @@ function AdminPanel({ activeTab, onTabChange }) {
                   {audienceMode === 'black' ? 'Show Output' : 'Black'}
                 </button>
               </div>
-              <div className="flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-900/70 p-2.5">
-                <QRCodeSVG
-                  value={`${window.location.origin}/#/audience`}
-                  size={76}
-                  level="M"
-                  bgColor="#ffffff"
-                  fgColor="#09090b"
-                  aria-label="QR code for audience display"
-                />
-                <div className="min-w-0">
-                  <p className="text-xs font-medium text-zinc-200">Audience display QR</p>
-                  <p className="mt-1 break-all text-[10px] leading-4 text-zinc-500">
-                    Scan to open the audience view
+              <div className="flex flex-col items-center gap-3 rounded-md border border-zinc-800 bg-zinc-900/70 p-4 text-center">
+                {musicianUrl ? (
+                  <QRCodeSVG
+                    value={musicianUrl}
+                    size={220}
+                    level="M"
+                    bgColor="#ffffff"
+                    fgColor="#09090b"
+                    aria-label="QR code for the musician monitor"
+                  />
+                ) : (
+                  <div className="grid size-[220px] shrink-0 place-items-center rounded bg-zinc-800 text-xs text-zinc-500">
+                    No network
+                  </div>
+                )}
+                <div className="w-full min-w-0">
+                  <p className="text-sm font-medium text-zinc-200">Musician monitor</p>
+                  <p className="mt-1 text-xs leading-4 text-zinc-500">
+                    Scan on the same Wi-Fi to follow lyrics and chords. Allow private-network access if prompted.
                   </p>
+                  {(musicianInfo?.addresses?.length || 0) > 1 && (
+                    <label className="mt-2 block text-left text-xs text-zinc-400">
+                      Network address
+                      <select
+                        value={selectedMusicianAddress?.address || ''}
+                        onChange={(event) => setMusicianAddress(event.target.value)}
+                        aria-label="Network address for musician monitor"
+                        className="mt-1 h-8 w-full rounded border border-zinc-700 bg-zinc-950 px-2 text-xs text-zinc-100"
+                      >
+                        {musicianInfo.addresses.map(({ name, address }) => (
+                          <option key={`${name}-${address}`} value={address}>
+                            {name}: {address}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {(musicianInfoError ||
+                    (companionUnavailable &&
+                      'The musician monitor is available in the Church Cast desktop app.')) && (
+                    <p role="alert" className="mt-1 text-xs leading-4 text-red-300">
+                      {musicianInfoError ||
+                        'The musician monitor is available in the Church Cast desktop app.'}
+                    </p>
+                  )}
+                  {!musicianUrl && !musicianInfoError && !companionUnavailable && (
+                    <p className="mt-1 text-xs leading-4 text-amber-300">
+                      Connect this computer to Wi-Fi.
+                    </p>
+                  )}
                 </div>
               </div>
             </section>
@@ -739,18 +905,18 @@ function AdminPanel({ activeTab, onTabChange }) {
 
 function App() {
   const [activeTab, setActiveTab] = useState('Scripture')
-  const [isAudienceView, setIsAudienceView] = useState(
-    () => window.location.hash === '#/audience',
-  )
+  const [route, setRoute] = useState(() => window.location.hash.split('?')[0])
 
   useEffect(() => {
-    const updateView = () => setIsAudienceView(window.location.hash === '#/audience')
+    const updateView = () => setRoute(window.location.hash.split('?')[0])
     window.addEventListener('hashchange', updateView)
     return () => window.removeEventListener('hashchange', updateView)
   }, [])
 
-  return isAudienceView ? (
+  return route === '#/audience' ? (
     <AudienceView />
+  ) : route === '#/musician' ? (
+    <MusicianPage />
   ) : (
     <AdminPanel activeTab={activeTab} onTabChange={setActiveTab} />
   )

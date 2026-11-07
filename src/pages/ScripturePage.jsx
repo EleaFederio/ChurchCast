@@ -252,7 +252,7 @@ export default function ScripturePage({ onProject }) {
     const reference =
       slide.length === 1
         ? slide[0].reference
-        : `${slide[0].reference}–${slide[slide.length - 1].reference}`
+        : `${slide[0].reference}–${slide[slide.length - 1].verseNumber}`
     onProject({
       type: 'scripture',
       reference,

@@ -2,6 +2,8 @@ const { app, BrowserWindow, ipcMain, screen } = require('electron')
 const { existsSync } = require('node:fs')
 const path = require('node:path')
 const { createSongsDatabase } = require('./songs-database')
+const { createMediaStore } = require('./media-store')
+const { createMusicianServer, getLanAddresses } = require('./musician-server')
 
 const controllerUrl = 'http://localhost:5173'
 const audienceUrl = 'http://localhost:5173/#/audience'
@@ -16,6 +18,9 @@ let audienceWindow
 let audienceMode = 'live'
 let latestProjection = 'For where two or three gather in my name'
 let songsDatabase
+let mediaStore
+let musicianServer
+let musicianServerPort
 
 function getSongsDatabase() {
   if (songsDatabase) return songsDatabase
@@ -139,6 +144,40 @@ function getAudienceDisplay() {
   return extendedDisplay || primaryDisplay
 }
 
+function getAudienceDisplaySize() {
+  const { size } = getAudienceDisplay()
+  return { width: size.width, height: size.height }
+}
+
+function syncAudienceDisplaySize() {
+  if (!controllerWindow || controllerWindow.isDestroyed()) return
+  controllerWindow.webContents.send('audience-display-size', getAudienceDisplaySize())
+}
+
+function getMusicianSong() {
+  const musician = latestProjection?.type === 'song' ? latestProjection.musician : null
+  if (!musician || typeof musician !== 'object') return null
+
+  return {
+    title: musician.title || '',
+    artist: musician.artist || '',
+    key: musician.key || '',
+    tempo: musician.tempo || '',
+    section: musician.section || '',
+    content: latestProjection.content,
+    lines: Array.isArray(musician.lines)
+      ? musician.lines
+          .filter(
+            (line) =>
+              line &&
+              typeof line.chords === 'string' &&
+              typeof line.lyrics === 'string',
+          )
+          .map(({ chords, lyrics }) => ({ chords, lyrics }))
+      : [],
+  }
+}
+
 function createAudienceWindow(openOnPrimary = false) {
   if (audienceWindow && !audienceWindow.isDestroyed()) return
 
@@ -174,7 +213,37 @@ function createWindows() {
   createAudienceWindow()
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  musicianServer = createMusicianServer(getMusicianSong)
+  musicianServerPort = await musicianServer.start()
+
+  ipcMain.handle('get-musician-companion-info', (event) => {
+    assertControllerSender(event)
+    return {
+      addresses: getLanAddresses(),
+      apiPort: musicianServerPort,
+      appPort: new URL(controllerUrl).port,
+      token: musicianServer.token,
+    }
+  })
+
+  ipcMain.handle('get-audience-display-size', (event) => {
+    assertControllerSender(event)
+    return getAudienceDisplaySize()
+  })
+
+  ipcMain.handle('media:list', (event) => {
+    assertControllerSender(event)
+    if (!mediaStore) mediaStore = createMediaStore(path.join(app.getPath('userData'), 'media'))
+    return mediaStore.list()
+  })
+
+  ipcMain.handle('media:save-many', (event, mediaItems) => {
+    assertControllerSender(event)
+    if (!mediaStore) mediaStore = createMediaStore(path.join(app.getPath('userData'), 'media'))
+    return mediaStore.saveMany(mediaItems)
+  })
+
   ipcMain.handle('youversion:list-bibles', async (event, options = {}) => {
     assertControllerSender(event)
     const languageRange = options.languageRange
@@ -273,15 +342,23 @@ app.whenReady().then(() => {
       return
     }
     latestProjection = slideContent
+    musicianServer.broadcast(getMusicianSong())
     if (audienceMode !== 'live' || !audienceWindow || audienceWindow.isDestroyed()) return
     audienceWindow.webContents.send('render-slide', slideContent)
   })
+
+  screen.on('display-added', syncAudienceDisplaySize)
+  screen.on('display-removed', syncAudienceDisplaySize)
+  screen.on('display-metrics-changed', syncAudienceDisplaySize)
 
   createWindows()
 
   app.on('activate', () => {
     createWindows()
   })
+}).catch((error) => {
+  console.error('Unable to start Church Cast.', error)
+  app.quit()
 })
 
 app.on('window-all-closed', () => {
@@ -289,6 +366,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', () => {
+  musicianServer?.close()
   songsDatabase?.close()
   songsDatabase = undefined
 })
